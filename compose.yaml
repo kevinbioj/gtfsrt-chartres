@@ -1,0 +1,9 @@
+services:
+  producer:
+    build:
+      context: .
+      dockerfile: ./Dockerfile
+    container_name: gtfsrt-chartres
+    ports:
+      - "127.0.0.1:50017:3000"
+    restart: unless-stopped
