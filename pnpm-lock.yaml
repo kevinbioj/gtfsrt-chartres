@@ -20,6 +20,9 @@ importers:
       hono:
         specifier: ^4.11.9
         version: 4.11.9
+      proj4:
+        specifier: ^2.20.2
+        version: 2.20.2
       protobufjs:
         specifier: ^8.0.0
         version: 8.0.0
@@ -318,6 +321,12 @@ packages:
   long@5.3.2:
     resolution: {integrity: sha512-mNAgZ1GmyNhD7AuqnTG3/VQ26o760+ZYBPKjPvugO8+nLbYfX6TVpJPseBvopbdY+qpZ/lKUnmEc1LeZYS3QAA==}
 
+  mgrs@1.0.0:
+    resolution: {integrity: sha512-awNbTOqCxK1DBGjalK3xqWIstBZgN6fxsMSiXLs9/spqWkF2pAhb2rrYCFSsr1/tT7PhcDGjZndG8SWYn0byYA==}
+
+  proj4@2.20.2:
+    resolution: {integrity: sha512-ipfBRfQly0HhHTO7hnC1GfaX8bvroO7VV4KH889ehmADSE8C/qzp2j+Jj6783S9Tj6c2qX/hhYm7oH0kgXzBAA==}
+
   protobufjs@8.0.0:
     resolution: {integrity: sha512-jx6+sE9h/UryaCZhsJWbJtTEy47yXoGNYI4z8ZaRncM0zBKeRqjO2JEcOUYwrYGb1WLhXM1FfMzW3annvFv0rw==}
     engines: {node: '>=12.0.0'}
@@ -340,6 +349,9 @@ packages:
 
   undici-types@7.16.0:
     resolution: {integrity: sha512-Zz+aZWSj8LE6zoxD+xrjh4VfkIG8Ya6LvYkZqtUQGJPZjYl53ypCaUwWqo7eI0x66KBGeRo+mlBEkMSeSZ38Nw==}
+
+  wkt-parser@1.5.2:
+    resolution: {integrity: sha512-1ZUiV1FTwSiSrgWzV9KXJuOF2BVW91KY/mau04BhnmgOdroRQea7Q0s5TVqwGLm0D2tZwObd/tBYXW49sSxp3Q==}
 
 snapshots:
 
@@ -533,6 +545,13 @@ snapshots:
 
   long@5.3.2: {}
 
+  mgrs@1.0.0: {}
+
+  proj4@2.20.2:
+    dependencies:
+      mgrs: 1.0.0
+      wkt-parser: 1.5.2
+
   protobufjs@8.0.0:
     dependencies:
       '@protobufjs/aspromise': 1.1.2
@@ -562,3 +581,5 @@ snapshots:
   typescript@5.9.3: {}
 
   undici-types@7.16.0: {}
+
+  wkt-parser@1.5.2: {}
