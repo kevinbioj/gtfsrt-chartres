@@ -1,325 +1,164 @@
-import { setTimeout as sleep } from "node:timers/promises";
 import { serve } from "@hono/node-server";
-import dayjs from "dayjs";
+import GtfsRealtime from "gtfs-realtime-bindings";
 import { Hono } from "hono";
 import { stream } from "hono/streaming";
+import { setTimeout } from "node:timers/promises";
+import { Temporal } from "temporal-polyfill";
 
-import type { TripUpdateEntity, VehiclePositionEntity } from "./gtfs/@types.js";
-import { downloadStaticResource } from "./gtfs/download-resource.js";
-import { encodePayload } from "./gtfs/encode-payload.js";
-import { wrapEntities } from "./gtfs/wrap-entities.js";
-import { fetchMonitoredLines } from "./siri/fetch-monitored-lines.js";
+import { GTFS_RESOURCE_URL, PORT, REFRESH_INTERVAL, REQUESTOR_REF, SIRI_ENDPOINT, SIRI_RATELIMIT } from "./config.js";
+import { useGtfsResource } from "./gtfs/load-resource.js";
+import { createFeed } from "./gtfs-rt/create-feed.js";
 import { fetchMonitoredVehicles } from "./siri/fetch-monitored-vehicles.js";
 import { extractCoordinates } from "./utils/extract-coordinates.js";
-import { parseSiriRef } from "./utils/parse-ref.js";
-import { parseTime } from "./utils/parse-time.js";
+import { extractSiriRef } from "./utils/extract-siri-ref.js";
+import { getOperatingLineIds } from "./utils/get-operating-line-ids.js";
+import { getOperatingServices } from "./utils/get-operating-services.js";
+import { useRealtimeStore } from "./gtfs-rt/use-realtime-store.js";
 
-import {
-	gtfsResourceHref,
-	siriEndpoint,
-	requestorRef,
-	siriRatelimit,
-	sweepThreshold,
-	port,
-} from "./config.js";
+console.log(` ,----.,--------.,------.,---.        ,------.,--------.  ,-----.,--.                      ,--.                        
+'  .-./'--.  .--'|  .---'   .-',-----.|  .--. '--.  .--' '  .--./|  ,---.  ,--,--.,--.--.,-'  '-.,--.--. ,---.  ,---.  
+|  | .---.|  |   |  \`--,\`.  \`-.'-----'|  '--'.'  |  |    |  |    |  .-.  |' ,-.  ||  .--''-.  .-'|  .--'| .-. :(  .-'  
+'  '--'  ||  |   |  |\`  .-'    |      |  |\\  \\   |  |    '  '--'\\|  | |  |\\ '-'  ||  |     |  |  |  |   \\   --..-'  \`) 
+ \`------' \`--'   \`--'   \`-----'       \`--' '--'  \`--'     \`-----'\`--' \`--' \`--\`--'\`--'     \`--'  \`--'    \`----'\`----'`);
 
-const tripUpdates = new Map<string, TripUpdateEntity>();
-const vehiclePositions = new Map<string, VehiclePositionEntity>();
+const gtfsResource = await useGtfsResource(GTFS_RESOURCE_URL);
 
-const server = new Hono();
-server.get("/trip-updates", (c) =>
-	stream(c, async (stream) => {
-		const payload = wrapEntities([...tripUpdates.values()]);
-		const serialized = encodePayload(payload);
-		await stream.write(serialized);
-	}),
-);
-server.get("/vehicle-positions", (c) =>
-	stream(c, async (stream) => {
-		const payload = wrapEntities([...vehiclePositions.values()]);
-		const serialized = encodePayload(payload);
-		await stream.write(serialized);
-	}),
-);
-server.get("/trip-updates.json", (c) =>
-	c.json(wrapEntities([...tripUpdates.values()])),
-);
-server.get("/vehicle-positions.json", (c) =>
-	c.json(wrapEntities([...vehiclePositions.values()])),
-);
+const store = useRealtimeStore();
 
-console.log("-- SIRI-VM TO GTFS --");
+const hono = new Hono();
+hono.get("/", async (c) => {
+	const feed = createFeed(store.tripUpdates, store.vehiclePositions);
+	if (c.req.query("format") === "json") return c.json(feed);
 
-console.log("Loading GTFS resource into memory.");
-let gtfsTrips = await downloadStaticResource(gtfsResourceHref);
-let gtfsTime = dayjs();
-let relevantLines = gtfsTrips.values().reduce((lines, trip) => {
-	lines.add(trip.route);
-	return lines;
-}, new Set<string>());
+	return stream(c, async (stream) => {
+		const encoded = GtfsRealtime.transit_realtime.FeedMessage.encode(feed).finish();
+		await stream.write(encoded);
+	});
+});
 
-console.log("Fetching monitored lines from SIRI service.");
-let monitoredLines = (await fetchMonitoredLines(siriEndpoint)).filter((line) =>
-	relevantLines.has(parseSiriRef(line)),
-);
-let monitoredLinesTime = dayjs();
+serve({ fetch: hono.fetch, port: PORT }, (info) => `|> Listening on ${info.address}:${info.port}`);
 
-let currentMonitoredLineIdx = 0;
-let tryAgain = true;
+let operatingServices = getOperatingServices(gtfsResource.gtfs, Temporal.Now.plainDateISO());
+let operatingLineIds = getOperatingLineIds(gtfsResource.gtfs, Temporal.Now.plainDateISO());
+setInterval(() => {
+	operatingServices = getOperatingServices(gtfsResource.gtfs, Temporal.Now.plainDateISO());
+	operatingLineIds = getOperatingLineIds(gtfsResource.gtfs, Temporal.Now.plainDateISO());
+}, REFRESH_INTERVAL);
 
-async function fetchingLoop() {
-	while (true) {
-		await sleep(siriRatelimit * 1000);
+let idx = 0;
+while (true) {
+	const startedAt = Date.now();
 
-		if (dayjs().diff(gtfsTime, "minutes") > 60) {
-			console.log(`Updating GTFS resource in memory.`);
-			try {
-				gtfsTrips = await downloadStaticResource(gtfsResourceHref);
-				gtfsTime = dayjs();
-				relevantLines = gtfsTrips.values().reduce((lines, trip) => {
-					lines.add(trip.route);
-					return lines;
-				}, new Set<string>());
-			} catch (e: unknown) {
-				console.error(`Failed to update GTFS resource, using old one for now:`);
-				console.error(e);
-			}
-		}
+	const currentLineId = operatingLineIds[idx % operatingLineIds.length];
+	console.log(`|> Fetching vehicles for line '${currentLineId}'.`);
 
-		if (dayjs().diff(monitoredLinesTime, "minutes") > 120) {
-			console.log(`Updating monitored lines from SIRI service.`);
-			try {
-				monitoredLines = (await fetchMonitoredLines(siriEndpoint)).filter(
-					(line) => relevantLines.has(parseSiriRef(line)),
-				);
-				monitoredLinesTime = dayjs();
-				await sleep(siriRatelimit * 1000);
-			} catch (e: unknown) {
-				console.error(
-					`Failed to update monitored lines from SIRI service, using old one for now:`,
-				);
-				console.error(e);
-			}
-		}
+	const vehicles = await fetchMonitoredVehicles(SIRI_ENDPOINT, REQUESTOR_REF, `FILIBUS:Line::${currentLineId}:LOC`);
 
-		if (currentMonitoredLineIdx > monitoredLines.length - 1)
-			currentMonitoredLineIdx = 0;
-		const monitoredLine = monitoredLines[currentMonitoredLineIdx];
-		console.log(
-			`Fetching monitored vehicles for line '${parseSiriRef(monitoredLine)}'.`,
-		);
-		try {
-			await fetchNextLine(monitoredLine);
-			currentMonitoredLineIdx += 1;
-			tryAgain = true;
-		} catch (e: unknown) {
-			console.error(
-				"Failed to fetch monitored vehicles, please see error below:",
-			);
-			console.error(e);
-			if (tryAgain) {
-				console.warn(
-					"Will be retrying to fetch monitored vehicles for this line...",
-				);
-				tryAgain = false;
-			} else {
-				console.warn("Skipping to the next line in the list.");
-				currentMonitoredLineIdx += 1;
-			}
-		}
-	}
-}
-
-fetchingLoop();
-setTimeout(sweepEntries, 60_000);
-
-// ---
-
-async function fetchNextLine(lineRef: string) {
-	if (gtfsTrips === null) return;
-
-	const monitoredVehicles = (
-		await fetchMonitoredVehicles(siriEndpoint, requestorRef, lineRef)
-	).filter(
-		(monitoredVehicle) =>
-			// monitoredVehicle.MonitoredVehicleJourney.Monitored &&
-			typeof monitoredVehicle.MonitoredVehicleJourney.FramedVehicleJourneyRef
-				?.DatedVehicleJourneyRef === "string" &&
-			typeof monitoredVehicle.MonitoredVehicleJourney.LineRef === "string" &&
-			typeof monitoredVehicle.MonitoredVehicleJourney.DirectionName ===
-				"string" &&
-			typeof monitoredVehicle.MonitoredVehicleJourney.MonitoredCall !==
-				"undefined" &&
-			monitoredVehicle.MonitoredVehicleJourney.MonitoredCall.ArrivalStatus !==
-				"noReport" &&
-			monitoredVehicle.MonitoredVehicleJourney.MonitoredCall.DepartureStatus !==
-				"noReport",
-	);
-
-	const processedTrips = new Set<string>();
-
-	for (const monitoredVehicle of monitoredVehicles) {
-		const vehicleRef = monitoredVehicle.VehicleMonitoringRef;
-		const recordedAt = dayjs(monitoredVehicle.RecordedAtTime).unix();
-
-		const monitoredCall =
-			monitoredVehicle.MonitoredVehicleJourney.MonitoredCall!;
-
-		const journeyRef = parseSiriRef(
-			monitoredVehicle.MonitoredVehicleJourney.FramedVehicleJourneyRef!
-				.DatedVehicleJourneyRef!,
-		);
-		const trip = gtfsTrips.get(journeyRef);
-		if (typeof trip === "undefined") {
-			console.warn(
-				`Failed to guess trip for vehicle '${vehicleRef}', skipping.`,
-			);
+	for (const vehicle of vehicles) {
+		if (
+			vehicle.MonitoredVehicleJourney.FramedVehicleJourneyRef?.DatedVehicleJourneyRef === undefined ||
+			vehicle.MonitoredVehicleJourney.VehicleLocation === undefined ||
+			vehicle.MonitoredVehicleJourney.MonitoredCall === undefined
+		) {
 			continue;
 		}
 
-		processedTrips.add(trip.id);
-		const monitoredStopTimeIdx = trip.stops.findIndex(
-			(s) =>
-				s.stop.id === parseSiriRef(monitoredCall.StopPointRef) ||
-				s.stop.name === monitoredCall.StopPointName,
+		const vehicleRef = vehicle.VehicleMonitoringRef;
+		const [, , , journeyRef] = extractSiriRef(
+			vehicle.MonitoredVehicleJourney.FramedVehicleJourneyRef.DatedVehicleJourneyRef,
 		);
 
-		const tripRef = trip.id;
-		const expectedTime =
-			monitoredCall.DepartureStatus !== "noReport"
-				? monitoredCall.ExpectedDepartureTime
-				: monitoredCall.ExpectedArrivalTime;
-		const atStop =
-			monitoredCall.VehicleAtStop || dayjs().isBefore(dayjs(expectedTime));
-		const nextStopTimes = trip.stops.slice(
-			monitoredStopTimeIdx + (atStop ? 0 : 1),
-		);
-		const delay =
-			monitoredStopTimeIdx === -1
-				? 0
-				: dayjs(expectedTime).diff(
-						parseTime(trip.stops[monitoredStopTimeIdx].time),
-						"seconds",
-					);
+		const trip = operatingServices
+			.map((service) => gtfsResource.gtfs.trips.get(`${service.id}${journeyRef}`))
+			.find((trip) => trip !== undefined);
 
-		tripUpdates.set(tripRef, {
-			id: `SM:${tripRef}`,
-			tripUpdate: {
-				stopTimeUpdate: nextStopTimes.map((stopTime) => ({
-					arrival: {
-						delay,
-						time: parseTime(stopTime.time).add(delay, "seconds").unix(),
-					},
-					departure: {
-						delay,
-						time: parseTime(stopTime.time).add(delay, "seconds").unix(),
-					},
-					stopId: stopTime.stop.id,
-					stopSequence: stopTime.sequence,
-					scheduleRelationship: "SCHEDULED",
-				})),
-				timestamp: recordedAt,
-				trip: {
-					routeId: trip.route,
-					directionId: trip.direction,
-					tripId: trip.id,
-					scheduleRelationship: "SCHEDULED",
-				},
-				vehicle: {
-					id: vehicleRef,
-					label: monitoredVehicle.MonitoredVehicleJourney.DestinationName,
-				},
-			},
+		if (trip === undefined) {
+			console.warn(`	${vehicle.VehicleMonitoringRef} - Failed to find trip for vehicle journey ref '${journeyRef}'`);
+			continue;
+		}
+
+		const { latitude, longitude } = extractCoordinates(vehicle.MonitoredVehicleJourney.VehicleLocation.Coordinates);
+
+		const timestamp = Math.floor(Temporal.Instant.from(vehicle.RecordedAtTime).epochMilliseconds / 1000);
+
+		const tripDescriptor = {
+			tripId: trip.id,
+			routeId: trip.routeId,
+			directionId: trip.directionId,
+			scheduleRelationship: GtfsRealtime.transit_realtime.TripDescriptor.ScheduleRelationship.SCHEDULED,
+		};
+
+		const vehicleDescriptor = { id: vehicleRef, label: vehicle.MonitoredVehicleJourney.DestinationName };
+
+		const atStop = vehicle.MonitoredVehicleJourney.MonitoredCall.VehicleAtStop;
+		const atTerminus =
+			vehicle.MonitoredVehicleJourney.MonitoredCall.Order > 1 &&
+			vehicle.MonitoredVehicleJourney.MonitoredCall.StopPointRef === vehicle.MonitoredVehicleJourney.DestinationRef;
+
+		store.vehiclePositions.set(`VM:${vehicleRef}`, {
+			currentStatus:
+				atStop || atTerminus
+					? GtfsRealtime.transit_realtime.VehiclePosition.VehicleStopStatus.STOPPED_AT
+					: GtfsRealtime.transit_realtime.VehiclePosition.VehicleStopStatus.IN_TRANSIT_TO,
+			currentStopSequence: vehicle.MonitoredVehicleJourney.MonitoredCall.Order + (atStop || atTerminus ? 0 : 1),
+			position: { latitude, longitude, bearing: vehicle.MonitoredVehicleJourney.Bearing },
+			timestamp,
+			trip: tripDescriptor,
+			vehicle: vehicleDescriptor,
 		});
 
-		vehiclePositions.set(vehicleRef, {
-			id: `VM:${vehicleRef}`,
-			vehicle: {
-				currentStatus:
-					typeof atStop === "boolean"
-						? atStop
-							? "STOPPED_AT"
-							: "IN_TRANSIT_TO"
-						: undefined,
-				currentStopSequence: nextStopTimes?.[0].sequence,
-				position: {
-					...extractCoordinates(
-						monitoredVehicle.MonitoredVehicleJourney.VehicleLocation!
-							.Coordinates,
-					),
-					bearing: monitoredVehicle.MonitoredVehicleJourney.Bearing,
-				},
-				stopId: nextStopTimes?.[0].stop.id,
-				timestamp: recordedAt,
-				trip: trip
-					? {
-							routeId: trip.route,
-							directionId: trip.direction,
-							tripId: trip.id,
-							scheduleRelationship: "SCHEDULED",
-						}
-					: undefined,
-				vehicle: {
-					id: vehicleRef,
-					label: monitoredVehicle.MonitoredVehicleJourney.DestinationName,
-				},
-			},
-		});
-	}
-}
+		const hasArrival =
+			vehicle.MonitoredVehicleJourney.MonitoredCall.AimedArrivalTime !== undefined &&
+			vehicle.MonitoredVehicleJourney.MonitoredCall.ExpectedArrivalTime !== undefined;
+		const hasDeparture =
+			vehicle.MonitoredVehicleJourney.MonitoredCall.AimedDepartureTime !== undefined &&
+			vehicle.MonitoredVehicleJourney.MonitoredCall.ExpectedDepartureTime !== undefined;
 
-function sweepEntries() {
-	console.log("Sweeping old entries from trip updates and vehicle positions.");
-	[...tripUpdates.values()]
-		.filter((tripUpdate) => {
-			const lastStop = tripUpdate.tripUpdate.stopTimeUpdate.at(-1);
-			if (typeof lastStop === "undefined") {
-				return (
-					dayjs().diff(dayjs.unix(tripUpdate.tripUpdate.timestamp), "seconds") >
-					sweepThreshold
-				);
-			}
-			if (lastStop.arrival.delay > 0) {
-				return (
-					dayjs().diff(dayjs.unix(lastStop.arrival.time), "seconds") >
-					sweepThreshold
-				);
-			}
-			const theoricalTime = dayjs
-				.unix(lastStop.arrival.time)
-				.subtract(lastStop.arrival.delay, "seconds");
-			return dayjs().diff(theoricalTime, "seconds") > sweepThreshold;
-		})
-		.forEach(
-			(tripUpdate) =>
-				void tripUpdates.delete(tripUpdate.tripUpdate.trip.tripId),
-		);
-	[...vehiclePositions.values()]
-		.filter((vehiclePosition) => {
-			if (vehiclePosition.vehicle.trip) {
-				const associatedTrip = tripUpdates.get(
-					vehiclePosition.vehicle.trip.tripId,
-				);
-				if (
-					dayjs().isBefore(
-						dayjs.unix(
-							associatedTrip?.tripUpdate.stopTimeUpdate.at(-1)?.arrival.time ??
-								0,
-						),
-					)
-				)
-					return false;
-			}
-			return (
-				dayjs().diff(dayjs.unix(vehiclePosition.vehicle.timestamp), "seconds") >
-				sweepThreshold
+		if (hasArrival || hasDeparture) {
+			store.tripUpdates.set(`ET:${trip.id}`, {
+				stopTimeUpdate: [
+					{
+						stopSequence: vehicle.MonitoredVehicleJourney.MonitoredCall.Order,
+						stopId: `0:${extractSiriRef(vehicle.MonitoredVehicleJourney.MonitoredCall.StopPointRef)[3]}`,
+						scheduleRelationship:
+							GtfsRealtime.transit_realtime.TripUpdate.StopTimeUpdate.ScheduleRelationship.SCHEDULED,
+						arrival: hasArrival
+							? {
+									delay: Temporal.Instant.from(vehicle.MonitoredVehicleJourney.MonitoredCall.ExpectedArrivalTime)
+										.since(vehicle.MonitoredVehicleJourney.MonitoredCall.AimedArrivalTime)
+										.total("seconds"),
+									time: Math.floor(
+										Temporal.Instant.from(vehicle.MonitoredVehicleJourney.MonitoredCall.ExpectedArrivalTime)
+											.epochMilliseconds / 1000,
+									),
+								}
+							: undefined,
+						departure: hasDeparture
+							? {
+									delay: Temporal.Instant.from(vehicle.MonitoredVehicleJourney.MonitoredCall.ExpectedDepartureTime)
+										.since(vehicle.MonitoredVehicleJourney.MonitoredCall.AimedDepartureTime)
+										.total("seconds"),
+									time: Math.floor(
+										Temporal.Instant.from(vehicle.MonitoredVehicleJourney.MonitoredCall.ExpectedDepartureTime)
+											.epochMilliseconds / 1000,
+									),
+								}
+							: undefined,
+					},
+				],
+				timestamp,
+				trip: tripDescriptor,
+				vehicle: vehicleDescriptor,
+			});
+
+			console.log(
+				` 	${vehicleRef} - ${journeyRef} - ${vehicle.MonitoredVehicleJourney.PublishedLineName}\t${vehicle.MonitoredVehicleJourney.DirectionName} ${extractSiriRef(vehicle.MonitoredVehicleJourney.OriginRef)[3]} > ${extractSiriRef(vehicle.MonitoredVehicleJourney.DestinationRef)[3]} @ ${extractSiriRef(vehicle.MonitoredVehicleJourney.MonitoredCall.StopPointRef)[3]} (#${vehicle.MonitoredVehicleJourney.MonitoredCall.Order} - atStop: ${atStop} - atTerminus: ${atTerminus})`,
 			);
-		})
-		.forEach(
-			(vehiclePosition) =>
-				void vehiclePositions.delete(vehiclePosition.vehicle.vehicle.id),
-		);
-	setTimeout(sweepEntries, 60_000);
-}
+		}
+	}
 
-serve({ fetch: server.fetch, port });
+	idx += 1;
+	const waitingTime = Math.max(SIRI_RATELIMIT - (Date.now() - startedAt), 0);
+	console.log(`✓ Done processing vehicle batch, waiting for ${waitingTime}ms`);
+	await setTimeout(waitingTime);
+}

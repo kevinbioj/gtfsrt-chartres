@@ -7,6 +7,8 @@ export type VehicleActivity = {
 	MonitoredVehicleJourney: {
 		LineRef: string;
 		DirectionName: "A" | "R";
+		PublishedLineName: string;
+		OriginRef: string;
 		DestinationRef: string;
 		DestinationName: string;
 		Monitored: boolean;
@@ -34,22 +36,10 @@ export type VehicleActivity = {
 	};
 };
 
-export async function fetchMonitoredVehicles(
-	siriEndpoint: string,
-	requestorRef: string,
-	lineRef: string,
-) {
-	const payload = await requestSiri(
-		siriEndpoint,
-		GET_VEHICLE_MONITORING(requestorRef, lineRef),
-	);
-	const vehicleActivities = payload.Envelope.Body.GetVehicleMonitoringResponse
-		.Answer.VehicleMonitoringDelivery.VehicleActivity as
-		| VehicleActivity
-		| VehicleActivity[]
-		| undefined;
+export async function fetchMonitoredVehicles(siriEndpoint: string, requestorRef: string, lineRef: string) {
+	const payload = await requestSiri(siriEndpoint, GET_VEHICLE_MONITORING(requestorRef, lineRef));
+	const vehicleActivities = payload.Envelope.Body.GetVehicleMonitoringResponse.Answer.VehicleMonitoringDelivery
+		.VehicleActivity as VehicleActivity | VehicleActivity[] | undefined;
 	if (typeof vehicleActivities === "undefined") return [];
-	return Array.isArray(vehicleActivities)
-		? vehicleActivities
-		: [vehicleActivities];
+	return Array.isArray(vehicleActivities) ? vehicleActivities : [vehicleActivities];
 }
