@@ -1,3 +1,4 @@
+import { access, constants } from "node:fs/promises";
 import { join } from "node:path";
 import { Temporal } from "temporal-polyfill";
 
@@ -45,50 +46,62 @@ async function importServices(directory: string) {
 	const services = new Map<string, Service>();
 
 	const calendarPath = join(directory, "calendar.txt");
-	await parseCsv<CalendarRecord>(calendarPath, (calendarRecord) => {
-		services.set(calendarRecord.service_id, {
-			id: calendarRecord.service_id,
-			days: [
-				Boolean(+calendarRecord.monday),
-				Boolean(+calendarRecord.tuesday),
-				Boolean(+calendarRecord.wednesday),
-				Boolean(+calendarRecord.thursday),
-				Boolean(+calendarRecord.friday),
-				Boolean(+calendarRecord.saturday),
-				Boolean(+calendarRecord.sunday),
-			],
-			startDate: Temporal.PlainDate.from(calendarRecord.start_date),
-			endDate: Temporal.PlainDate.from(calendarRecord.end_date),
-			excludedDays: [],
-			includedDays: [],
-		});
-	});
+	const isCalendarReadable = await access(calendarPath, constants.R_OK)
+		.then(() => true)
+		.catch(() => false);
 
-	const calendarDatesPath = join(directory, "calendar_dates.txt");
-	await parseCsv<CalendarDatesRecord>(calendarDatesPath, (calendarDatesRecord) => {
-		let service = services.get(calendarDatesRecord.service_id);
-
-		if (service === undefined) {
-			service = {
-				id: calendarDatesRecord.service_id,
-				days: [false, false, false, false, false, false, false],
-				startDate: Temporal.PlainDate.from("20000101"),
-				endDate: Temporal.PlainDate.from("20991231"),
+	if (isCalendarReadable) {
+		await parseCsv<CalendarRecord>(calendarPath, (calendarRecord) => {
+			services.set(calendarRecord.service_id, {
+				id: calendarRecord.service_id,
+				days: [
+					Boolean(+calendarRecord.monday),
+					Boolean(+calendarRecord.tuesday),
+					Boolean(+calendarRecord.wednesday),
+					Boolean(+calendarRecord.thursday),
+					Boolean(+calendarRecord.friday),
+					Boolean(+calendarRecord.saturday),
+					Boolean(+calendarRecord.sunday),
+				],
+				startDate: Temporal.PlainDate.from(calendarRecord.start_date),
+				endDate: Temporal.PlainDate.from(calendarRecord.end_date),
 				excludedDays: [],
 				includedDays: [],
-			};
+			});
+		});
+	}
 
-			services.set(service.id, service);
-		}
+	const calendarDatesPath = join(directory, "calendar_dates.txt");
+	const isCalendarDatesReadable = await access(calendarDatesPath, constants.R_OK)
+		.then(() => true)
+		.catch(() => false);
 
-		const date = Temporal.PlainDate.from(calendarDatesRecord.date);
+	if (isCalendarDatesReadable) {
+		await parseCsv<CalendarDatesRecord>(calendarDatesPath, (calendarDatesRecord) => {
+			let service = services.get(calendarDatesRecord.service_id);
 
-		if (calendarDatesRecord.exception_type === "1") {
-			service.includedDays.push(date);
-		} else {
-			service.excludedDays.push(date);
-		}
-	});
+			if (service === undefined) {
+				service = {
+					id: calendarDatesRecord.service_id,
+					days: [false, false, false, false, false, false, false],
+					startDate: Temporal.PlainDate.from("20000101"),
+					endDate: Temporal.PlainDate.from("20991231"),
+					excludedDays: [],
+					includedDays: [],
+				};
+
+				services.set(service.id, service);
+			}
+
+			const date = Temporal.PlainDate.from(calendarDatesRecord.date);
+
+			if (calendarDatesRecord.exception_type === "1") {
+				service.includedDays.push(date);
+			} else {
+				service.excludedDays.push(date);
+			}
+		});
+	}
 
 	return services;
 }
