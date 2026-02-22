@@ -26,13 +26,6 @@ export async function useGtfsResource(resourceUrl: string) {
 		importedAt: Temporal.Now.instant(),
 	};
 
-	// 	let operatingServices = getOperatingServices(gtfsResource.gtfs, Temporal.Now.plainDateISO());
-	// let operatingLineIds = getOperatingLineIds(gtfsResource.gtfs, Temporal.Now.plainDateISO());
-	// setInterval(() => {
-	// 	operatingServices = getOperatingServices(gtfsResource.gtfs, Temporal.Now.plainDateISO());
-	// 	operatingLineIds = getOperatingLineIds(gtfsResource.gtfs, Temporal.Now.plainDateISO());
-	// }, REFRESH_INTERVAL);
-
 	if (operatingInfoJob === undefined) {
 		operatingInfoJob = new Cron("0 3 * * *", () => {
 			const today = Temporal.Now.zonedDateTimeISO().toPlainDate();
@@ -47,33 +40,38 @@ export async function useGtfsResource(resourceUrl: string) {
 
 	currentInterval = setInterval(
 		async () => {
-			console.log("|> Checking for GTFS resource staleness.");
+			console.log("➔ Checking for GTFS resource staleness.");
 
-			const response = await fetch(resourceUrl, {
-				method: "HEAD",
-				signal: AbortSignal.timeout(30_000),
-			});
+			try {
+				const response = await fetch(resourceUrl, {
+					method: "HEAD",
+					signal: AbortSignal.timeout(30_000),
+				});
 
-			if (!response.ok) {
-				console.warn("   Unable to fetch GTFS staleness data, aborting.");
-				return;
+				if (!response.ok) {
+					console.warn("    ⛛ Unable to fetch GTFS staleness data, aborting.");
+					return;
+				}
+
+				if (response.headers.get("last-modified") === resource.lastModified) {
+					console.log("    ⛛ GTFS resource is up-to-date.");
+					return;
+				}
+
+				console.log("    ⛛ GTFS resource is stale: requesting update.");
+
+				const now = Temporal.Now.zonedDateTimeISO("Europe/Paris");
+				const today = now.toPlainDate().subtract({ days: now.hour < 3 ? 1 : 0 });
+
+				const newResource = await loadResource(resourceUrl);
+				resource.gtfs = newResource.resource;
+				resource.lastModified = newResource.lastModified;
+				resource.operatingServices = getOperatingServices(initialResource.resource, today);
+				resource.operatingLineIds = getOperatingLineIds(initialResource.resource, today);
+				resource.importedAt = Temporal.Now.instant();
+			} catch (cause) {
+				console.error(`✘ GTFS update routine failed:`, cause);
 			}
-
-			if (response.headers.get("last-modified") === resource.lastModified) {
-				console.log("   GTFS resource is up-to-date.");
-				return;
-			}
-
-			console.log("     GTFS resource is stale: updating.");
-			const now = Temporal.Now.zonedDateTimeISO("Europe/Paris");
-			const today = now.toPlainDate().subtract({ days: now.hour < 3 ? 1 : 0 });
-
-			const newResource = await loadResource(resourceUrl);
-			resource.gtfs = newResource.resource;
-			resource.lastModified = newResource.lastModified;
-			resource.operatingServices = getOperatingServices(initialResource.resource, today);
-			resource.operatingLineIds = getOperatingLineIds(initialResource.resource, today);
-			resource.importedAt = Temporal.Now.instant();
 		},
 		Temporal.Duration.from({ minutes: 5 }).total("milliseconds"),
 	);
@@ -84,10 +82,10 @@ export async function useGtfsResource(resourceUrl: string) {
 // --- loadResource
 
 async function loadResource(resourceUrl: string) {
-	console.log(`|> Loading GTFS resource at '${resourceUrl}'.`);
+	console.log(`➔ Loading GTFS resource at '${resourceUrl}'.`);
 
 	const workingDirectory = await mkdtemp(join(tmpdir(), "gtfsrt-chartres_"));
-	console.log(`     Generated working directory at '${workingDirectory}'.`);
+	console.log(`    ⛛ Generated working directory at '${workingDirectory}'.`);
 
 	try {
 		const { lastModified } = await downloadResource(resourceUrl, workingDirectory);

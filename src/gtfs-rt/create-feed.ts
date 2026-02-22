@@ -2,8 +2,8 @@ import GtfsRealtime from "gtfs-realtime-bindings";
 import { Temporal } from "temporal-polyfill";
 
 export function createFeed(
-	tripUpdates: Map<string, GtfsRealtime.transit_realtime.ITripUpdate>,
-	vehiclePositions: Map<string, GtfsRealtime.transit_realtime.IVehiclePosition>,
+	tripUpdates: Map<string, GtfsRealtime.transit_realtime.ITripUpdate> | null,
+	vehiclePositions: Map<string, GtfsRealtime.transit_realtime.IVehiclePosition> | null,
 ) {
 	return GtfsRealtime.transit_realtime.FeedMessage.create({
 		header: {
@@ -12,14 +12,18 @@ export function createFeed(
 			timestamp: Math.floor(Temporal.Now.instant().epochMilliseconds / 1000),
 		},
 		entity: [
-			...tripUpdates
-				.entries()
-				.flatMap(([id, tripUpdate]) => (tripUpdate.stopTimeUpdate?.length ? [{ id, tripUpdate }] : []))
-				.toArray(),
-			...vehiclePositions
-				.entries()
-				.map(([id, vehicle]) => ({ id, vehicle }))
-				.toArray(),
+			...(tripUpdates !== null
+				? tripUpdates
+						.entries()
+						.flatMap(([id, tripUpdate]) => (tripUpdate.stopTimeUpdate?.length ? [{ id, tripUpdate }] : []))
+						.toArray()
+				: []),
+			...(vehiclePositions !== null
+				? vehiclePositions
+						.entries()
+						.map(([id, vehicle]) => ({ id, vehicle }))
+						.toArray()
+				: []),
 		],
 	});
 }
