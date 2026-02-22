@@ -1,19 +1,17 @@
+import { setTimeout } from "node:timers/promises";
 import { serve } from "@hono/node-server";
 import GtfsRealtime from "gtfs-realtime-bindings";
 import { Hono } from "hono";
 import { stream } from "hono/streaming";
-import { setTimeout } from "node:timers/promises";
 import { Temporal } from "temporal-polyfill";
 
-import { GTFS_RESOURCE_URL, PORT, REFRESH_INTERVAL, REQUESTOR_REF, SIRI_ENDPOINT, SIRI_RATELIMIT } from "./config.js";
+import { GTFS_RESOURCE_URL, PORT, REQUESTOR_REF, SIRI_ENDPOINT, SIRI_RATELIMIT } from "./config.js";
 import { useGtfsResource } from "./gtfs/load-resource.js";
 import { createFeed } from "./gtfs-rt/create-feed.js";
+import { useRealtimeStore } from "./gtfs-rt/use-realtime-store.js";
 import { fetchMonitoredVehicles } from "./siri/fetch-monitored-vehicles.js";
 import { extractCoordinates } from "./utils/extract-coordinates.js";
 import { extractSiriRef } from "./utils/extract-siri-ref.js";
-import { getOperatingLineIds } from "./utils/get-operating-line-ids.js";
-import { getOperatingServices } from "./utils/get-operating-services.js";
-import { useRealtimeStore } from "./gtfs-rt/use-realtime-store.js";
 
 console.log(` ,----.,--------.,------.,---.        ,------.,--------.  ,-----.,--.                      ,--.                        
 '  .-./'--.  .--'|  .---'   .-',-----.|  .--. '--.  .--' '  .--./|  ,---.  ,--,--.,--.--.,-'  '-.,--.--. ,---.  ,---.  
@@ -38,18 +36,11 @@ hono.get("/", async (c) => {
 
 serve({ fetch: hono.fetch, port: PORT }, (info) => `|> Listening on ${info.address}:${info.port}`);
 
-let operatingServices = getOperatingServices(gtfsResource.gtfs, Temporal.Now.plainDateISO());
-let operatingLineIds = getOperatingLineIds(gtfsResource.gtfs, Temporal.Now.plainDateISO());
-setInterval(() => {
-	operatingServices = getOperatingServices(gtfsResource.gtfs, Temporal.Now.plainDateISO());
-	operatingLineIds = getOperatingLineIds(gtfsResource.gtfs, Temporal.Now.plainDateISO());
-}, REFRESH_INTERVAL);
-
 let idx = 0;
 while (true) {
 	const startedAt = Date.now();
 
-	const currentLineId = operatingLineIds[idx % operatingLineIds.length];
+	const currentLineId = gtfsResource.operatingLineIds[idx % gtfsResource.operatingLineIds.length];
 	console.log(`|> Fetching vehicles for line '${currentLineId}'.`);
 
 	const vehicles = await fetchMonitoredVehicles(SIRI_ENDPOINT, REQUESTOR_REF, `FILIBUS:Line::${currentLineId}:LOC`);
@@ -68,7 +59,7 @@ while (true) {
 			vehicle.MonitoredVehicleJourney.FramedVehicleJourneyRef.DatedVehicleJourneyRef,
 		);
 
-		const trip = operatingServices
+		const trip = gtfsResource.operatingServices
 			.map((service) => gtfsResource.gtfs.trips.get(`${service.id}${journeyRef}`))
 			.find((trip) => trip !== undefined);
 
