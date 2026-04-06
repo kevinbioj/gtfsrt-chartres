@@ -12,24 +12,24 @@
 		"build": "tsc",
 		"start": "node dist/index.js"
 	},
-	"packageManager": "pnpm@10.30.2+sha512.36cdc707e7b7940a988c9c1ecf88d084f8514b5c3f085f53a2e244c2921d3b2545bc20dd4ebe1fc245feec463bb298aecea7a63ed1f7680b877dc6379d8d0cb4",
+	"packageManager": "pnpm@10.33.0+sha512.10568bb4a6afb58c9eb3630da90cc9516417abebd3fabbe6739f0ae795728da1491e9db5a544c76ad8eb7570f5c4bb3d6c637b2cb41bfdcdb47fa823c8649319",
 	"dependencies": {
-		"@hono/node-server": "^1.19.9",
+		"@hono/node-server": "^1.19.12",
 		"croner": "^10.0.1",
 		"decompress": "^4.2.1",
-		"fast-xml-parser": "^5.4.1",
+		"fast-xml-parser": "^5.5.10",
 		"gtfs-realtime-bindings": "^1.1.1",
-		"hono": "^4.12.2",
+		"hono": "^4.12.11",
 		"papaparse": "^5.5.3",
-		"proj4": "^2.20.2",
-		"temporal-polyfill": "^0.3.0"
+		"proj4": "^2.20.8",
+		"temporal-polyfill": "^0.3.2"
 	},
 	"devDependencies": {
-		"@biomejs/biome": "^2.4.4",
+		"@biomejs/biome": "^2.4.10",
 		"@types/decompress": "^4.2.7",
-		"@types/node": "^25.3.0",
+		"@types/node": "^25.5.2",
 		"@types/papaparse": "^5.5.2",
 		"tsx": "^4.21.0",
-		"typescript": "^5.9.3"
+		"typescript": "^6.0.2"
 	}
 }
