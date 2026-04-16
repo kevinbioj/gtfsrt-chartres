@@ -21,7 +21,7 @@ export function getOperatingServices(gtfs: GtfsResource, date: Temporal.PlainDat
 				return false;
 			}
 
-			return service.days[date.dayOfWeek];
+			return service.days[date.dayOfWeek - 1];
 		})
 		.toArray();
 }
