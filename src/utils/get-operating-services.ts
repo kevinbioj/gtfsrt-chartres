@@ -1,5 +1,3 @@
-import { Temporal } from "temporal-polyfill";
-
 import type { GtfsResource } from "../gtfs/import-resource.js";
 
 export function getOperatingServices(gtfs: GtfsResource, date: Temporal.PlainDate) {

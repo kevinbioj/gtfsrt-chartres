@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { Temporal } from "temporal-polyfill";
 
 export const GET_VEHICLE_MONITORING = (requestorRef: string, lineRef: string) => {
 	const requestTimestamp = Temporal.Now.instant().toString();

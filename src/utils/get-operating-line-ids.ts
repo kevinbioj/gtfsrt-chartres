@@ -1,5 +1,3 @@
-import type { Temporal } from "temporal-polyfill";
-
 import type { GtfsResource } from "../gtfs/import-resource.js";
 
 import { getOperatingServices } from "./get-operating-services.js";

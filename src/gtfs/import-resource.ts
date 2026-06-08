@@ -1,6 +1,5 @@
 import { access, constants } from "node:fs/promises";
 import { join } from "node:path";
-import { Temporal } from "temporal-polyfill";
 
 import { parseCsv } from "../utils/parse-csv.js";
 
