@@ -1,4 +1,5 @@
-export const GTFS_RESOURCE_URL = "https://www.data.gouv.fr/api/1/datasets/r/8d4c3e5c-1702-4649-b47a-b16c6016dcc6";
+export const GTFS_RESOURCE_URL =
+	"https://transport-data-gouv-fr-resource-history-prod.cellar-c2.services.clever-cloud.com/80587/80587.20260211.113050.276767.zip";
 export const PORT = 3000;
 export const REFRESH_INTERVAL = Temporal.Duration.from({ minutes: 10 }).total("milliseconds");
 export const REQUESTOR_REF = "opendata";
